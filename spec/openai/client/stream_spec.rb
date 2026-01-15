@@ -92,6 +92,56 @@ RSpec.describe OpenAI::Stream do
         end
       end
 
+      context "with a HTTP error response with body containing JSON split across chunks" do
+        let(:error_env) do
+          Faraday::Env.from(
+            method: :post,
+            url: URI("http://example.com"),
+            status: 400,
+            request: {},
+            response: Faraday::Response.new
+          )
+        end
+        let(:expected_body) do
+          {
+            "error" => {
+              "message" => "Test error",
+              "type" => "test_error",
+              "param" => nil,
+              "code" => "test"
+            }
+          }
+        end
+
+        it "raises an error" do
+          json = expected_body.to_json
+          # Split the JSON into two chunks in the middle
+          chunks = [json[0..(json.length / 2)], json[((json.length / 2) + 1)..]]
+
+          expect do
+            chunks.each do |chunk|
+              stream.call(chunk, bytes, error_env)
+            end
+          end.to raise_error(Faraday::BadRequestError) do |e|
+            expect(e.response).to include(status: 400)
+            expect(e.response[:body]).to eq(expected_body)
+          end
+        end
+
+        it "does not call user proc on error" do
+          expect(user_proc).not_to receive(:call)
+
+          json = expected_body.to_json
+          chunks = [json[0..(json.length / 2)], json[((json.length / 2) + 1)..]]
+
+          expect do
+            chunks.each do |chunk|
+              stream.call(chunk, bytes, error_env)
+            end
+          end.to raise_error(Faraday::BadRequestError)
+        end
+      end
+
       context "with a call method that only takes one argument" do
         let(:user_proc) { proc { |data| data } }
 
